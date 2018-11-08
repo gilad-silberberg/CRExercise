@@ -1,0 +1,87 @@
+---
+title: "CRExercise"
+author: "Gilad Silberberg"
+date: "November 8, 2018"
+output: html_document
+---
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+# Expression analysis in psoriatic lesion
+
+## read data and QC
+```{r read data and inspect samples, echo=FALSE}
+source('funcCRexercise.R')
+gene_counts <- read.table('counts.txt', header = T)
+rownames(gene_counts) <- gene_counts$X
+gene_counts <- gene_counts[,-1]
+geneAnnot <- read.table('gene-annotation.txt', sep ='\t', header = T)
+sampAnnot <- read.table('sample-annotation.txt', header = T)
+print(table(sampAnnot$type))
+identical(as.vector(sampAnnot$sample_id), colnames(gene_counts)) # check sample annotation fits sample names in count data
+normal_samples <- sampAnnot$sample_id[sampAnnot$type=='normal']
+lesional_samples <- sampAnnot$sample_id[sampAnnot$type=='lesional']
+```
+
+```{r }
+
+```
+
+### filter genes based on CPM 
+```{r >1 cpm in > 50% per group, echo=F}
+require(edgeR, quietly=T)
+
+filt.by.cpm <- filtered.data(gene_counts, factor = sampAnnot$type, norm = F, method = 1, cpm = 1, cv.cutoff = 50)
+# calculate logCPM
+d <- DGEList(gene_counts)
+filt.logCPM <- cpm(d,log=TRUE)
+filt.logCPM <-filt.logCPM[rownames(filt.by.cpm),] # filter
+saveRDS(filt.logCPM, 'filt.logCPM.rds')
+
+```
+
+### QC with NOIseq
+```{r }
+require(biomaRt, quietly = T)
+require(NOISeq, quietly = T)
+marthsapiens <- useEnsembl(biomart="ensembl", dataset="hsapiens_gene_ensembl")
+type.mart<-"ensembl_gene_id"
+biotypes<-getBM(attributes=c(type.mart,"chromosome_name","strand",
+                             "start_position","end_position","gene_biotype"),
+                filters=type.mart,values=rownames(filt.by.cpm),mart=marthsapiens)
+ensembl_gc_lengths <- read.table("GC_lengths_gencode.v27.txt", header =T)
+biotypes <- merge(biotypes, ensembl_gc_lengths, by.x='ensembl_gene_id', by.y=0)
+
+biotypes_intervals <- biotypes[c(type.mart, 'chromosome_name', 'start_position', 'end_position')]
+rownames(biotypes_intervals) <- biotypes_intervals$ensembl_gene_id
+biotypes_intervals <- biotypes_intervals[,-1]
+# NOIseq object:
+NOIseqObj <- readData(data = filt.by.cpm, length = biotypes[c(type.mart,'Length')], gc = biotypes[c(type.mart, 'GC')], biotype = biotypes[c(type.mart, 'gene_biotype')], chromosome = biotypes_intervals, factors = as.data.frame(sampAnnot$type))
+countsbio <- dat(NOIseqObj, factor = NULL, type = "countsbio")
+saturation <- dat(NOIseqObj, k = 0, ndepth = 7, type = "saturation")
+biodetectionFactor <- dat(NOIseqObj, k = 10, type = "biodetection", factor = 'sampAnnot$type')
+
+```
+
+```{r coverage of different biotypes in the 2 tissue types}
+par(mfrow = c(1, 2))
+explo.plot(biodetectionFactor, toplot = "protein_coding",plottype = "comparison")
+png("biotype_groupsdetect.png",width = 960*1.75, height = 960*1.25,res=90)
+par(mfrow = c(1, 2))
+explo.plot(biodetectionFactor, toplot = "protein_coding",plottype = "comparison")
+dev.off()
+```
+
+```{r Count distribution per sample}
+explo.plot(countsbio, toplot = "protein_coding", samples = NULL, plottype = "boxplot", cex=0.3, xaxt = "n")
+png("coverageofProteinCodingGenes.png",width = 960*1.75, height = 960*1.25,res=90)
+par(mfrow = c(1, 2))
+explo.plot(biodetectionFactor, toplot = "protein_coding",plottype = "comparison")
+dev.off()
+```
+
+```{r}
+require(DESeq2, quietly = T)
+
+```
+
